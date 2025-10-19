@@ -1,5 +1,6 @@
 import asyncio
 import os
+import aio_pika
 from typing import Dict, Any
 from dotenv import load_dotenv
 from db import get_db, engine as db_engine, Base
@@ -16,10 +17,10 @@ async def run_judge_server():
     try:
         await rmq_client.connect()
         
-        async def message_callback_with_db(job_data: Dict[str, Any]):
+        async def message_callback_with_db(message:aio_pika.IncomingMessage):
             async with get_db() as session:
                 print("Database connect successfully...")
-                await process_challenge_job(job_data, session, rmq_client)
+                await process_challenge_job(rmq_client, session, message)
 
         print("Judge Server Start... Waiting for jobs.")
         await rmq_client.start_consuming(

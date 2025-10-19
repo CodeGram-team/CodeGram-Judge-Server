@@ -2,11 +2,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from typing import Dict, Any, List
+import aio_pika
 import subprocess
 import asyncio
 import tempfile
 import logging
 import os
+import json
+from rmq import RabbitMQClient
 from model import Problems, TestCases
 from config import LANGUAGE_CONFIG, TIME_LIMIT, MEMORY_LIMIT
 
@@ -134,12 +137,27 @@ async def grading_code_challenge(job_data:Dict[str,Any], session:AsyncSession)->
         
         return {"status": "Accepted", "execution_time": round(max_time, 4)}
 
-async def process_challenge_job(job_data:Dict[str,Any], session:AsyncSession, rmq_client):
+async def process_challenge_job(rmq_client:RabbitMQClient, 
+                                session:AsyncSession, 
+                                message:aio_pika.IncomingMessage):
+    job_data = json.loads(message.body.decode())
+        
     final_result = await grading_code_challenge(job_data, session)
+    
     result_message = {
         "submission_id" : job_data.get("submission_id"),
         "result" : final_result
     }
-    await rmq_client.publish_message("code_execution_queue", result_message)
+    if message.reply_to and message.correlation_id:
+        await rmq_client.channel.default_exchange.publish(
+            aio_pika.Message(
+                body=json.dumps(result_message).encode(),
+                correlation_id=message.correlation_id
+            ),
+            routing_key=message.reply_to
+        )
+        print(f"Sent RPC response for job: {job_data.get('submission_id')}")
+    else:
+        await rmq_client.publish_message("code_execution_queue", result_message)
     
     
